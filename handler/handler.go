@@ -1,19 +1,16 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 )
-
-type Handler interface {
-	ServeHTTP(w http.ResponseWriter, r *http.Request)
-}
 
 type PlayerStore interface {
 	GetPlayerScore(name string) int
 	RecordWin(name string)
+	GetLeague() []Player
 }
 
 type InMemoryPlayerStore struct {
@@ -44,19 +41,49 @@ func (s *InMemoryPlayerStore) RecordWin(name string) {
 	s.store[name] = old + 1
 }
 
-type PlayerServer struct {
-	store PlayerStore
+func (s *InMemoryPlayerStore) GetLeague() []Player {
+	players := make([]Player, 0)
+	for k, v := range s.store {
+		players = append(players, Player{Name: k, Wins: v})
+	}
+	return players
 }
 
-func (p *PlayerServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	player := strings.TrimPrefix(r.URL.Path, "/players/")
+type PlayerServer struct {
+	store PlayerStore
+	http.Handler
+}
+
+func NewPlayerServer(store PlayerStore) *PlayerServer {
+	p := new(PlayerServer)
+	p.store = store
+
+	router := http.NewServeMux()
+	router.Handle("/league", http.HandlerFunc(p.leagueHandler))
+
+	router.Handle("/players/", http.HandlerFunc(p.playerHandler))
+	p.Handler = router
+	return p
+}
+
+func (p *PlayerServer) leagueHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("content-type", "application/json")
+	json.NewEncoder(w).Encode(p.getLeagueTable())
+
+}
+
+func (p *PlayerServer) getLeagueTable() []Player {
+	return p.store.GetLeague()
+}
+
+func (p *PlayerServer) playerHandler(w http.ResponseWriter, r *http.Request) {
+	player := r.URL.Path[len("/players/"):]
 	switch r.Method {
 	case http.MethodGet:
 		p.showScore(w, player)
 	case http.MethodPost:
 		p.processWin(w, player)
 	}
-
 }
 
 func (p *PlayerServer) processWin(w http.ResponseWriter, player string) {
